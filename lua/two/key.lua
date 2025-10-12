@@ -4,18 +4,17 @@
 
 local M = {}
 
----@alias key.dict_raw table<string, any>
 ---@alias key.dict [integer, string|function, vim.api.keyset.keymap?, boolean?]
 
 ---@alias key.lhs string
 ---@alias key.stack key.dict[]?
 
----@type table<'n'|'x'|'o'|'i'|'c'|'t'|'s', table<key.lhs, key.stack>>
+---@type table<string, table<key.lhs, key.stack>>
 local stks = { n = {}, x = {}, o = {}, i = {}, c = {}, t = {}, s = {} }
 M.stks = stks
 
 ---@change
----@param dict key.dict_raw
+---@param dict table<string, any>
 ---@return vim.api.keyset.keymap, string, boolean, boolean
 local convert_dict = function(dict)
   local rhs, buffer
@@ -37,6 +36,40 @@ local convert_dict = function(dict)
     dict.rhs = nil
   end
   return dict, rhs, mapped, buffer
+end
+
+M.swap = function(a, b) -- https://github.com/neovim/neovim/discussions/33468#discussioncomment-12830810
+  a.dict = fn.maparg(a.lhs, a.mode, false, true)
+  b.dict = fn.maparg(b.lhs, b.mode, false, true)
+  for _, x in pairs { a, b } do
+    x.dict.abbr = nil
+    x.dict.lhs = nil
+    x.dict.lhsraw = nil
+    x.dict.lnum = nil
+    x.dict.mode = nil
+    x.dict.mode_bits = nil
+    x.dict.script = nil
+    x.dict.scriptversion = nil
+    x.dict.sid = nil
+    x.buffer = x.dict.buffer == 1
+    x.dict.buffer = nil
+    if x.dict.expr == 1 then x.dict.replace_keycodes = 0 end
+    if getmetatable(x.dict) == vim._empty_dict_mt then
+      x.rhs = x.lhs
+      x.dict.noremap = true
+    else
+      x.rhs = x.dict.rhs or ''
+      x.dict.rhs = nil
+    end
+  end
+  for _, x in pairs { { a, b }, { b, a } } do
+    local A, B = unpack(x)
+    if A.buffer == 0 then
+      api.nvim_set_keymap(A.mode, A.lhs, B.rhs, B.dict)
+    else
+      api.nvim_buf_set_keymap(0, A.mode, A.lhs, B.rhs, B.dict)
+    end
+  end
 end
 
 ---@param ns integer

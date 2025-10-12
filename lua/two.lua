@@ -3,64 +3,18 @@ local fn, api, lsp = vim.fn, vim.api, vim.lsp
 
 local u = {
   key = require('two.key'),
+  opfunc = require('two.opfunc'),
 }
 
 ---START INJECT two.lua
 
 local M = {}
 
-local options = {
-  ns = api.nvim_create_namespace('two'),
-  hl = { name = 'TwoRegion', link = 'Search' },
-  diff = { side_by_side = true },
-}
-
-api.nvim_set_hl(0, options.hl.name, { link = options.hl.link, default = true })
-
----@alias two.op 'swap'|'diff'
----@alias two.handler fun(linewise: boolean, start_pos: two.pos, end_pos: two.pos)
----@alias two.mode "char"|"line"|"block"
----@alias two.pos [integer, integer]
-
-M.state = {
-  op = nil, ---@type two.op?
-  count = nil, ---@type integer?
-  cancel_callback = nil, ---@type function?
-}
-
----@param mode two.mode
----@return boolean, two.pos, two.pos
-local get_context = function(mode)
-  if mode == 'block' then error("[TWO] doesn't works with blockwise selections") end
-  local linewise = mode == 'line'
-  local start_pos, end_pos = api.nvim_buf_get_mark(0, '['), api.nvim_buf_get_mark(0, ']')
-  return linewise, start_pos, end_pos
-end
-
-M.cancel = function(buf)
-  api.nvim_buf_clear_namespace(buf or 0, options.ns, 0, -1)
-  u.key.pop(options.ns, 'n', '<esc>')
-end
-
----@param linewise boolean
----@param callback function
-M.mark_region = function(linewise, callback)
-  if vim.is_callable(M.state.cancel_callback) then M.state.cancel_callback() end
-  M.state.cancel_callback = callback
-  vim.hl.range(0, options.ns, options.hl.name, "'[", "']", {
-    regtype = linewise and 'V' or 'v',
-    inclusive = true,
-  })
-  u.key.push(options.ns, 'n', '<esc>', callback)
-  api.nvim_buf_attach(0, false, { on_lines = callback })
-end
-
----@type table<two.op, two.handler>
-M.handlers = {}
-
-M.handlers.swap = function(linewise, start_pos, end_pos)
+---@type opfunc.handler
+local swap = function(linewise, start_pos, end_pos)
   ---@param a lsp.Position
   ---@param b lsp.Position
+  ---@return 1|0|-1
   local cmp_pos = function(a, b)
     if a.line == b.line and a.character == b.character then return 0 end
     if a.line < b.line or a.line == b.line and a.character < b.character then return -1 end
@@ -69,6 +23,7 @@ M.handlers.swap = function(linewise, start_pos, end_pos)
 
   ---@param a lsp.Range
   ---@param b lsp.Range
+  ---@return 1|0|-1
   local cmp_range = function(a, b)
     local rv = cmp_pos(a.start, b.start)
     return rv ~= 0 and rv or cmp_pos(a.start, b.start)
@@ -76,7 +31,7 @@ M.handlers.swap = function(linewise, start_pos, end_pos)
 
   local buf = api.nvim_get_current_buf()
   local swap_cancel = function()
-    M.cancel(buf)
+    u.opfunc.cancel(buf)
     vim.b.swap_save = nil
     return true
   end
@@ -115,7 +70,7 @@ M.handlers.swap = function(linewise, start_pos, end_pos)
   end)()
 
   if not vim.b.swap_save then
-    M.mark_region(linewise, swap_cancel)
+    u.opfunc.mark_region(linewise, swap_cancel)
     vim.b.swap_save = edit
     return
   end
@@ -126,10 +81,11 @@ M.handlers.swap = function(linewise, start_pos, end_pos)
   do_swap(edits)
 end
 
-M.handlers.diff = function(linewise, _, _)
+---@type opfunc.handler
+local diff = function(linewise, _, _)
   local buf = api.nvim_get_current_buf()
   local diff_cancel = function()
-    M.cancel(buf)
+    u.opfunc.cancel(buf)
     vim.g.diff_save = nil
     return true
   end
@@ -137,12 +93,13 @@ M.handlers.diff = function(linewise, _, _)
   local lines = fn.getregion(fn.getpos "'[", fn.getpos "']", { type = linewise and 'V' or 'v' })
 
   if not vim.g.diff_save then
-    M.mark_region(linewise, diff_cancel)
+    u.opfunc.mark_region(linewise, diff_cancel)
     vim.g.diff_save = lines
     return
   end
 
-  if options.diff.side_by_side then
+  local side_by_side = true
+  if side_by_side then
     local ft = vim.bo[buf].ft
     local create_buf = function(lines0)
       local buf0 = api.nvim_create_buf(false, true)
@@ -159,8 +116,8 @@ M.handlers.diff = function(linewise, _, _)
   end
 
   local newbuf = api.nvim_create_buf(false, true)
-  local text = vim.split(
-    vim.diff(table.concat(lines, '\n'), table.concat(vim.g.diff_save, '\n')) --[[@as string]],
+  local text = vim.split( ---@diagnostic disable-next-line: deprecated
+    (vim.text.diff or vim.diff)(table.concat(lines, '\n'), table.concat(vim.g.diff_save, '\n')) --[[@as string]],
     '\n'
   )
   api.nvim_buf_set_lines(newbuf, 0, -1, false, text)
@@ -177,27 +134,8 @@ M.handlers.diff = function(linewise, _, _)
   diff_cancel()
 end
 
----@param mode two.mode
-M.opfunc = function(mode)
-  local handler = M.handlers[M.state.op]
-  if not handler then return end
-  local linewise, start_pos, end_pos = get_context(mode)
-  handler(linewise, start_pos, end_pos)
-end
+M.swap = function() return u.opfunc.run(swap) end
 
-_G._U_TWO_OPFUNC = M.opfunc
-
----@param op two.op
-local with_op = function(op)
-  local motion = api.nvim_get_mode().mode:match('[vV\022]') and '`<' or ''
-  M.state.op = op
-  M.state.count = (M.state.count or 0) + 1
-  if vim.o.opfunc ~= 'v:lua._U_TWO_OPFUNC' then vim.o.opfunc = 'v:lua._U_TWO_OPFUNC' end
-  return 'g@' .. motion
-end
-
-M.swap = function() return with_op('swap') end
-
-M.diff = function() return with_op('diff') end
+M.diff = function() return u.opfunc.run(diff) end
 
 return M
