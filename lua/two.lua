@@ -138,4 +138,8 @@ M.swap = function() return u.opfunc.run(swap) end
 
 M.diff = function() return u.opfunc.run(diff) end
 
+M.sort = function()
+  return u.opfunc.run(function(_, _, _) vim.cmd("'[,']sort i") end)
+end
+
 return M
