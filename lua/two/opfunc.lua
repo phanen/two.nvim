@@ -1,6 +1,10 @@
 local api = vim.api
 ---START INJECT opfunc.lua
 
+local u = {
+  key = require('two.key'),
+}
+
 local M = {}
 
 ---@alias opfunc.mode "char"|"line"|"block"

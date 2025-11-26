@@ -1,119 +1,98 @@
-if not package.path:match(vim.pesc('./lua/?.lua') .. ';?') then
-  package.path = table.concat({ package.path, './lua/?.lua' }, ';')
-end
+---@diagnostic disable: invisible
+local n = require('nvim-test.helpers')
+local Screen = require('nvim-test.screen')
+local exec_lua = n.exec_lua
 
-local api = vim.api
+-- `make luals` to download ${3rd} (not bundled in emmyluals?)
+describe('swap', function()
+  local screen --- @type test.screen
+  before_each(function()
+    n.clear()
+    screen = Screen.new(30, 5)
+    screen:attach()
+    screen:set_default_attr_ids({
+      [1] = { foreground = Screen.colors.NvimLightGrey4 },
+    })
+    exec_lua(function()
+      vim.opt.rtp:append('.')
+      vim.keymap.set({ 'n', 'x' }, 'gs', require('two').swap, { expr = true })
+    end)
+  end)
 
-local a = require('luassert')
+  it('one-line chunk', function()
+    n.api.nvim_buf_set_lines(0, 0, -1, true, {
+      'aaaaaaabbbbbbbb',
+      'foo + bar + baz',
+      'c ddddddddddddd',
+    })
 
----@class SwapTest
-local SwapTest = {
-  init = function(self, lines)
-    assert(type(lines) == 'table')
-    self.buf = api.nvim_create_buf(false, false)
-    api.nvim_win_set_buf(0, self.buf)
-    api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
+    n.feed('gstbfbgs$')
+    screen:expect({
+      grid = [[
+        bbbbbbbb^aaaaaaa               |
+        foo + bar + baz               |
+        c ddddddddddddd               |
+        {1:~                             }|
+                                      |
+      ]],
+    })
 
-    vim.keymap.set({ 'n', 'x' }, 'gs', require('two').swap, { expr = true })
-  end,
-  run_keys = function(self, keys)
-    keys = type(keys) == 'table' and table.concat(keys) or keys
-    vim.cmd([[normal ]] .. keys)
-    return self
-  end,
-  expect = function(self, lines)
-    local buf_lines = api.nvim_buf_get_lines(self.buf, 0, -1, false)
-    a.is_equal(table.concat(lines, '\n'), table.concat(buf_lines, '\n'))
-    return self
-  end,
-  __call = function(cls, lines)
-    local obj = setmetatable({}, { __index = cls })
-    obj:init(lines)
-    return obj
-  end,
-}
-setmetatable(SwapTest, SwapTest)
+    n.feed('jgsiw^gsegse$gsiw')
+    screen:expect({
+      grid = [[
+        bbbbbbbbaaaaaaa               |
+        baz + foo + ^bar               |
+        c ddddddddddddd               |
+        {1:~                             }|
+                                      |
+      ]],
+    })
 
-describe('test', function()
-  it(
-    'one-line chunk swap',
-    function()
-      SwapTest {
-          'aaaaaaabbbbbbbb',
-          'foo + bar + baz',
-          'c ddddddddddddd',
-        }
-        :run_keys('gstbfbgs$')
-        :expect {
-          'bbbbbbbbaaaaaaa',
-          'foo + bar + baz',
-          'c ddddddddddddd',
-        }
-        :run_keys('jgsiw^gsegse$gsiw')
-        :expect {
-          'bbbbbbbbaaaaaaa',
-          'baz + foo + bar',
-          'c ddddddddddddd',
-        }
-        :run_keys('kgsTb2j^gsl')
-        :expect {
-          'bbbbbbbbcaaa',
-          'baz + foo + bar',
-          'aaaa ddddddddddddd',
-        }
-    end
-  )
+    n.feed('kgsTb2j^gsl')
+    screen:expect({
+      grid = [[
+        bbbbbbbbcaaa                  |
+        baz + foo + bar               |
+        ^aaaa ddddddddddddd            |
+        {1:~                             }|
+                                      |
+      ]],
+    })
+  end)
 
-  it(
-    'work well with unicode',
-    function()
-      SwapTest {
-        'あああ 你好',
-        '🧑‍🌾❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️ ❤️',
-        '😂😂😂😂😂😂😂😂😂😂😂',
-      }:run_keys('2gslwgs2l'):expect {
-        '你好あ ああ',
-        '🧑‍🌾❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️ ❤️',
-        '😂😂😂😂😂😂😂😂😂😂😂',
-      }
-    end
-  )
-  it(
-    'should not index out of range when force charwise',
-    function()
-      SwapTest {
-        'aaaaaaaaa',
-        '我我我我我',
-        'bbbbbbbbbb',
-      }:run_keys('$gsvjjgsvj'):expect {
-        'aaaaaaaa我',
-        'bbbbbbbba',
-        '我我我我bb',
-      }
-    end
-  )
-end)
+  it('work well with unicode', function()
+    n.api.nvim_buf_set_lines(0, 0, -1, true, {
+      'あああ 你好',
+      '🧑‍🌾❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️ ❤️',
+      '😂😂😂😂😂😂😂😂😂😂😂',
+    })
+    n.feed('2gslwgs2l')
+    screen:expect {
+      grid = [[
+        你好あ ^ああ                   |
+        🧑‍🌾❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️ ❤️     |
+        😂😂😂😂😂😂😂😂😂😂😂        |
+        {1:~                             }|
+                                      |
+      ]],
+    }
+  end)
 
--- don't trust anything
-describe('test helper', function()
-  it('simple equal', function()
-    for _ in ipairs {
-      { 'xxx', '', 'bbb' },
-      {
-        'あああ 你好',
-        '🧑‍🌾❤️❤️❤️❤️❤️❤️❤️❤️❤️❤️ ❤️',
-        '😂😂😂😂😂😂😂😂😂😂😂',
-      },
-    } do
-      SwapTest {
-        'xxx',
-        '',
-        'bbb',
-      }:expect {
-        'xxx',
-        '',
-        'bbb',
-      }
-    end
+  it('should not index out of range when force charwise', function()
+    n.api.nvim_buf_set_lines(0, 0, -1, true, {
+      'aaaaaaaaa',
+      '我我我我我',
+      'bbbbbbbbbb',
+    })
+    n.feed('$gsvjjgsvj')
+    screen:expect {
+      grid = [[
+        aaaaaaaa我                    |
+        bbbbbbbb^a                     |
+        我我我我bb                    |
+        {1:~                             }|
+                                      |
+      ]],
+    }
   end)
 end)

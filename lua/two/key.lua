@@ -1,4 +1,5 @@
 ---@diagnostic disable: duplicate-doc-field, duplicate-set-field, duplicate-doc-alias
+local api, fn = vim.api, vim.fn
 
 ---START INJECT key.lua
 
